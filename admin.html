@@ -1,0 +1,308 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Admin Panel | Portfolio Manager</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:opsz,wght@14..32,400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: 'Inter', sans-serif; background: #0f172a; color: #e2e8f0; padding: 2rem; }
+        .admin-container { max-width: 1100px; margin: 0 auto; }
+        .card { background: #1e293b; border-radius: 1.5rem; padding: 1.8rem; margin-bottom: 2rem; border: 1px solid #334155; }
+        h1 { font-size: 1.8rem; font-weight: 700; margin-bottom: 1rem; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 1rem; }
+        h2 { font-size: 1.4rem; margin: 1rem 0 1rem 0; border-left: 4px solid #3b82f6; padding-left: 0.75rem; }
+        input, textarea { width: 100%; padding: 0.75rem; background: #0f172a; border: 1px solid #334155; border-radius: 0.75rem; color: white; margin-bottom: 1rem; font-family: inherit; }
+        button { background: #3b82f6; border: none; padding: 0.6rem 1.2rem; border-radius: 2rem; font-weight: 500; color: white; cursor: pointer; transition: 0.2s; margin-right: 0.6rem; margin-top: 0.3rem; }
+        button:hover { background: #2563eb; transform: scale(0.97); }
+        .danger-btn { background: #ef4444; }
+        .danger-btn:hover { background: #dc2626; }
+        .item-list { background: #0f172a; border-radius: 1rem; padding: 0.8rem; margin-bottom: 1rem; }
+        .item { background: #1e293b; padding: 1rem; border-radius: 1rem; margin-bottom: 0.7rem; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 0.5rem; }
+        .login-form { max-width: 400px; margin: 5rem auto; background: #1e293b; padding: 2rem; border-radius: 2rem; text-align: center; }
+        .badge { background: #2dd4bf20; color: #5eead4; padding: 0.2rem 0.6rem; border-radius: 30px; font-size: 0.7rem; }
+        hr { border-color: #334155; margin: 1rem 0; }
+    </style>
+</head>
+<body id="adminApp">
+    <div class="admin-container" id="adminContainer"></div>
+    <script>
+        const API_BASE = 'https://sheetdb.io/api/v1/aze92ll26mmmb';
+        const ADMIN_PASSWORD = 'Santonur2077runner';
+        let isAuthenticated = false;
+        let bearerToken = '';
+
+        // --- Helper: Authenticated API request (adds Bearer token) ---
+        async function apiRequest(endpoint, method, data = null, isDeleteWithSheet = false, deleteColumn = null, deleteValue = null) {
+            const headers = { 'Content-Type': 'application/json' };
+            if (bearerToken) headers['Authorization'] = `Bearer ${bearerToken}`;
+
+            let url = endpoint;
+            if (isDeleteWithSheet && deleteColumn && deleteValue) {
+                url = `${API_BASE}/${deleteColumn}/${encodeURIComponent(deleteValue)}?sheet=${data.sheet}`;
+                const response = await fetch(url, { method: 'DELETE', headers });
+                if (!response.ok) throw new Error(`HTTP ${response.status}`);
+                return response.json();
+            }
+            const options = { method, headers };
+            if (data && (method === 'POST' || method === 'PATCH')) options.body = JSON.stringify(data);
+            const response = await fetch(url, options);
+            if (!response.ok) throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+            return response.json();
+        }
+
+        async function fetchSheet(sheetName) {
+            try {
+                const res = await fetch(`${API_BASE}?sheet=${sheetName}`);
+                if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                return await res.json();
+            } catch(e) { return []; }
+        }
+
+        async function updateSheet(sheetName, data) {
+            return apiRequest(`${API_BASE}?sheet=${sheetName}`, 'PATCH', data);
+        }
+        async function createSheetRow(sheetName, data) {
+            return apiRequest(`${API_BASE}?sheet=${sheetName}`, 'POST', data);
+        }
+        async function deleteRow(sheetName, columnName, columnValue) {
+            return apiRequest('', 'DELETE', { sheet: sheetName }, true, columnName, columnValue);
+        }
+
+        // ---- Auto-initialize default data if sheets are empty ----
+        async function ensureDefaultData() {
+            const [profile, projects, contact, extra] = await Promise.all([
+                fetchSheet('profile'), fetchSheet('projects'), fetchSheet('contact'), fetchSheet('extra')
+            ]);
+            if (!profile.length) await updateSheet('profile', { pictureurl: 'https://randomuser.me/api/portraits/women/68.jpg', name: 'Alex Morgan', description: 'Creative developer building impactful digital experiences.' });
+            if (!contact.length) await updateSheet('contact', { email: 'hello@alex.dev', phone: '+1 (555) 123-4567' });
+            if (!projects.length) {
+                await createSheetRow('projects', { name: 'Sample Project', description: 'This is a demo project. You can edit or delete it.', livelink: 'https://example.com' });
+            }
+            if (!extra.length) {
+                await createSheetRow('extra', { title: '⚡ Core Skills', content: '<ul><li>React / Next.js</li><li>Node.js</li><li>UI/UX Design</li></ul>' });
+            }
+        }
+
+        // --- Login UI ---
+        function renderLogin() {
+            document.getElementById('adminContainer').innerHTML = `
+                <div class="login-form">
+                    <i class="fas fa-lock" style="font-size: 2rem; color:#3b82f6;"></i>
+                    <h2>Admin Access</h2>
+                    <input type="password" id="adminPass" placeholder="Admin Password" autocomplete="off">
+                    <input type="password" id="apiToken" placeholder="SheetDB Bearer Token (mandatory)" autocomplete="off">
+                    <button id="loginBtn">Authenticate <i class="fas fa-arrow-right"></i></button>
+                    <div class="badge" style="margin-top: 1rem;"><i class="fas fa-key"></i> Bearer token is required – your API is secured.</div>
+                </div>
+            `;
+            document.getElementById('loginBtn').addEventListener('click', async () => {
+                const password = document.getElementById('adminPass').value;
+                const token = document.getElementById('apiToken').value.trim();
+                if (password !== ADMIN_PASSWORD) {
+                    alert('❌ Invalid password.');
+                    return;
+                }
+                if (!token) {
+                    alert('❌ Bearer token is mandatory. Please enter your SheetDB API token.');
+                    return;
+                }
+                bearerToken = token;
+                isAuthenticated = true;
+                // Test token by fetching a sheet
+                try {
+                    await fetchSheet('profile');
+                    await ensureDefaultData();
+                    await renderAdminPanel();
+                } catch (err) {
+                    alert(`❌ Authentication failed. Check your Bearer token.\n${err.message}`);
+                    isAuthenticated = false;
+                    bearerToken = '';
+                    renderLogin();
+                }
+            });
+        }
+
+        // --- Admin Dashboard ---
+        async function renderAdminPanel() {
+            const container = document.getElementById('adminContainer');
+            container.innerHTML = `<div style="text-align:center;padding:3rem;"><i class="fas fa-spinner fa-pulse"></i> Loading dashboard...</div>`;
+            try {
+                const [profileData, contactData, projectsData, extrasData] = await Promise.all([
+                    fetchSheet('profile'), fetchSheet('contact'), fetchSheet('projects'), fetchSheet('extra')
+                ]);
+                const profile = profileData?.[0] || {};
+                const contact = contactData?.[0] || {};
+                const projects = Array.isArray(projectsData) ? projectsData : [];
+                const extras = Array.isArray(extrasData) ? extrasData : [];
+
+                let html = `<div class="admin-container">
+                    <div class="card"><h1><i class="fas fa-sliders-h"></i> Portfolio Admin <button id="logoutBtn" class="danger-btn"><i class="fas fa-sign-out-alt"></i> Logout</button></h1></div>
+                    <div class="card"><h2><i class="fas fa-user-circle"></i> Profile</h2>
+                        <input type="text" id="profilePicture" placeholder="Picture URL" value="${escapeHtml(profile.pictureurl || '')}">
+                        <input type="text" id="profileName" placeholder="Full Name" value="${escapeHtml(profile.name || '')}">
+                        <textarea id="profileDescription" rows="3" placeholder="Bio">${escapeHtml(profile.description || '')}</textarea>
+                        <button id="saveProfileBtn">Save Profile</button>
+                    </div>
+                    <div class="card"><h2><i class="fas fa-id-card"></i> Contact</h2>
+                        <input type="email" id="contactEmail" placeholder="Email" value="${escapeHtml(contact.email || '')}">
+                        <input type="text" id="contactPhone" placeholder="Phone" value="${escapeHtml(contact.phone || '')}">
+                        <button id="saveContactBtn">Save Contact</button>
+                    </div>
+                    <div class="card"><h2><i class="fas fa-tasks"></i> Projects (${projects.length})</h2><div id="projectsList"></div><hr><h3>➕ Add New Project</h3>
+                        <input type="text" id="newProjectName" placeholder="Project Name"><textarea id="newProjectDesc" rows="2" placeholder="Description"></textarea><input type="text" id="newProjectLink" placeholder="Live Link URL"><button id="addProjectBtn">Add Project</button>
+                    </div>
+                    <div class="card"><h2><i class="fas fa-cubes"></i> Custom Sections (${extras.length})</h2><div id="extrasList"></div><hr><h3>➕ Add New Section</h3>
+                        <input type="text" id="newExtraTitle" placeholder="Section Title"><textarea id="newExtraContent" rows="3" placeholder="Content (HTML allowed)"></textarea><button id="addExtraBtn">Add Section</button>
+                        <div class="badge" style="margin-top:10px;">HTML tags allowed: &lt;ul&gt;, &lt;li&gt;, &lt;p&gt;, etc.</div>
+                    </div>
+                </div>`;
+                container.innerHTML = html;
+
+                // Render projects list
+                function renderProjects() {
+                    const projDiv = document.getElementById('projectsList');
+                    if (!projDiv) return;
+                    if (!projects.length) { projDiv.innerHTML = '<div class="item-list">✨ No projects yet.</div>'; return; }
+                    let list = '<div class="item-list">';
+                    projects.forEach((p, idx) => {
+                        const idAttr = p.id ? p.id : `proj_${idx}`;
+                        list += `<div class="item"><div><strong>${escapeHtml(p.name)}</strong><br><small>${escapeHtml(p.description?.substring(0,80))}</small><br><span class="badge">🔗 ${escapeHtml(p.livelink || 'no link')}</span></div>
+                        <div><button class="editProjBtn" data-id="${idAttr}" data-name="${escapeHtml(p.name)}" data-desc="${escapeHtml(p.description||'')}" data-link="${escapeHtml(p.livelink||'')}">✏️ Edit</button>
+                        <button class="delProjBtn" data-name="${escapeHtml(p.name)}" style="background:#b91c1c;">🗑️ Delete</button></div></div>`;
+                    });
+                    list += `</div>`;
+                    projDiv.innerHTML = list;
+                    // Edit
+                    document.querySelectorAll('.editProjBtn').forEach(btn => {
+                        btn.addEventListener('click', async () => {
+                            const oldName = btn.getAttribute('data-name');
+                            const newName = prompt('New project name:', oldName); if (!newName) return;
+                            const newDesc = prompt('Description:', btn.getAttribute('data-desc'));
+                            const newLink = prompt('Live link URL:', btn.getAttribute('data-link'));
+                            const target = projects.find(p => p.name === oldName);
+                            if (target) {
+                                try {
+                                    await apiRequest(`${API_BASE}/name/${encodeURIComponent(oldName)}?sheet=projects`, 'PATCH', { name: newName, description: newDesc, livelink: newLink || '' });
+                                    alert('✅ Updated');
+                                    await renderAdminPanel();
+                                } catch(e) { alert('Update failed: ' + e.message); }
+                            }
+                        });
+                    });
+                    // Delete
+                    document.querySelectorAll('.delProjBtn').forEach(btn => {
+                        btn.addEventListener('click', async () => {
+                            const name = btn.getAttribute('data-name');
+                            if (confirm(`Delete project "${name}"?`)) {
+                                try {
+                                    await deleteRow('projects', 'name', name);
+                                    alert('Deleted');
+                                    await renderAdminPanel();
+                                } catch(e) { alert('Delete failed: ' + e.message); }
+                            }
+                        });
+                    });
+                }
+                function renderExtras() {
+                    const extraDiv = document.getElementById('extrasList');
+                    if (!extraDiv) return;
+                    if (!extras.length) { extraDiv.innerHTML = '<div class="item-list">📦 No custom sections.</div>'; return; }
+                    let list = '<div class="item-list">';
+                    extras.forEach((s, idx) => {
+                        list += `<div class="item"><div><strong>${escapeHtml(s.title)}</strong><br><small>${escapeHtml(s.content?.substring(0,70))}</small></div>
+                        <div><button class="editExtraBtn" data-title="${escapeHtml(s.title)}" data-content="${escapeHtml(s.content||'')}">✏️ Edit</button>
+                        <button class="delExtraBtn" data-title="${escapeHtml(s.title)}" style="background:#b91c1c;">🗑️ Delete</button></div></div>`;
+                    });
+                    list += `</div>`;
+                    extraDiv.innerHTML = list;
+                    document.querySelectorAll('.editExtraBtn').forEach(btn => {
+                        btn.addEventListener('click', async () => {
+                            const oldTitle = btn.getAttribute('data-title');
+                            const newTitle = prompt('Section title:', oldTitle); if (!newTitle) return;
+                            const newContent = prompt('Content (HTML allowed):', btn.getAttribute('data-content'));
+                            try {
+                                await apiRequest(`${API_BASE}/title/${encodeURIComponent(oldTitle)}?sheet=extra`, 'PATCH', { title: newTitle, content: newContent || '' });
+                                alert('✅ Updated');
+                                await renderAdminPanel();
+                            } catch(e) { alert('Error: ' + e.message); }
+                        });
+                    });
+                    document.querySelectorAll('.delExtraBtn').forEach(btn => {
+                        btn.addEventListener('click', async () => {
+                            const title = btn.getAttribute('data-title');
+                            if (confirm(`Delete section "${title}"?`)) {
+                                try {
+                                    await deleteRow('extra', 'title', title);
+                                    alert('Deleted');
+                                    await renderAdminPanel();
+                                } catch(e) { alert('Delete failed: ' + e.message); }
+                            }
+                        });
+                    });
+                }
+
+                // Save profile
+                document.getElementById('saveProfileBtn').addEventListener('click', async () => {
+                    const data = {
+                        pictureurl: document.getElementById('profilePicture').value,
+                        name: document.getElementById('profileName').value,
+                        description: document.getElementById('profileDescription').value
+                    };
+                    try {
+                        await updateSheet('profile', data);
+                        alert('Profile saved');
+                        await renderAdminPanel();
+                    } catch(e) { alert('Error: ' + e.message); }
+                });
+                // Save contact
+                document.getElementById('saveContactBtn').addEventListener('click', async () => {
+                    const data = { email: document.getElementById('contactEmail').value, phone: document.getElementById('contactPhone').value };
+                    try {
+                        await updateSheet('contact', data);
+                        alert('Contact saved');
+                        await renderAdminPanel();
+                    } catch(e) { alert('Error: ' + e.message); }
+                });
+                // Add project
+                document.getElementById('addProjectBtn').addEventListener('click', async () => {
+                    const name = document.getElementById('newProjectName').value.trim();
+                    if (!name) { alert('Project name required'); return; }
+                    const desc = document.getElementById('newProjectDesc').value.trim();
+                    const link = document.getElementById('newProjectLink').value.trim();
+                    try {
+                        await createSheetRow('projects', { name, description: desc, livelink: link || '' });
+                        alert('Project added');
+                        await renderAdminPanel();
+                    } catch(e) { alert('Add failed: ' + e.message); }
+                });
+                // Add extra
+                document.getElementById('addExtraBtn').addEventListener('click', async () => {
+                    const title = document.getElementById('newExtraTitle').value.trim();
+                    if (!title) { alert('Section title required'); return; }
+                    const content = document.getElementById('newExtraContent').value;
+                    try {
+                        await createSheetRow('extra', { title, content: content || '<p>New custom section</p>' });
+                        alert('Section added');
+                        await renderAdminPanel();
+                    } catch(e) { alert('Add failed: ' + e.message); }
+                });
+                // Logout
+                document.getElementById('logoutBtn').addEventListener('click', () => {
+                    isAuthenticated = false;
+                    bearerToken = '';
+                    renderLogin();
+                });
+                renderProjects();
+                renderExtras();
+            } catch (err) {
+                container.innerHTML = `<div class="card"><h2>Error</h2><p>${err.message}</p><button onclick="renderLogin()">Back to Login</button></div>`;
+            }
+        }
+
+        function escapeHtml(str) { if (!str) return ''; return str.replace(/[&<>]/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[m])); }
+        renderLogin();
+    </script>
+</body>
+</html>
